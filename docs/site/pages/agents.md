@@ -14,7 +14,7 @@ For a website (pages served to a browser), the file is [start-here-site.md](../.
 
 ## Markdown pages
 
-Add `.md` to a page's URL to get the page as Markdown: `/recipes/money` is `/recipes/money.md`, and the home page is `/index.md`. Each page's HTML names its Markdown with `<link rel="alternate" type="text/markdown">`.
+Add `.md` to a page's URL to get the page as Markdown: `/recipes/money` is `/recipes/money.md`, and the home page is `/index.md`. Each page's HTML names its Markdown with `<link rel="alternate" type="text/markdown">`. A request for the page itself with `Accept: text/markdown` gets the same Markdown.
 
 Each Markdown page starts with frontmatter (`title`, `description` and `modificationDate`) and a pointer to `/llms.txt`. Its links go to other Markdown pages, or to the file on GitHub.
 

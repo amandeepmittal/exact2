@@ -870,6 +870,15 @@ function* treeFile(dist, pathname, accept, miss) {
   }
   return null;
 }
+function prefersMarkdown(accept = '') {
+  const quality = (type) => {
+    const range = String(accept ?? '').toLowerCase().split(',').map((r) => r.split(';').map((part) => part.trim())).find(([name]) => name === type);
+    const q = range?.slice(1).find((param) => param.startsWith('q='));
+    return !range ? 0 : q ? Number(q.slice(2)) || 0 : 1;
+  };
+  const markdown = quality('text/markdown');
+  return markdown > 0 && markdown >= quality('text/html');
+}
 /** Whether a request may be for a page: a browser's navigation, or one taking any type at a path naming no file. */
 const asksPage = (req, pathname) => acceptsHTML(req.headers.accept) || (!!pathname && acceptsHTML(req.headers.accept, { wildcard: true }) && appDocumentPath(pathname));
 /** A JS-target build's file for a request, from the build the page booted (generations.mjs): a document names its
@@ -889,10 +898,12 @@ export async function serveBuildTree(dist, req, res, { pinned = null, pages = nu
     sendStaticBody(req, res, answers.body, { 'content-type': answers.status === 200 ? 'application/json' : 'text/plain; charset=utf-8', 'cache-control': answers.status === 200 ? 'private, max-age=3600, immutable' : 'no-store' }, answers.status);
     return;
   }
-  let r = target ? await servedFile(dist, target.pathname, req.headers.accept, { pinned }) : { status: 404 };
+  const negotiated = !!target && !extname(target.pathname);
+  const markdown = negotiated && prefersMarkdown(req.headers.accept) ? await servedFile(dist, `${target.pathname.replace(/\/+$/, '') || '/index'}.md`, req.headers.accept, { pinned }) : null;
+  let r = markdown?.status === 200 ? markdown : target ? await servedFile(dist, target.pathname, req.headers.accept, { pinned }) : { status: 404 };
   // A request taking any type (curl's) is answered as a navigation where that is a page rendered for it, as any
   // server rendering pages answers it; a route the client draws stays a browser's.
-  if (pages && target && asksPage(req, target.pathname) && !acceptsHTML(req.headers.accept)) {
+  if (pages && target && r !== markdown && asksPage(req, target.pathname) && !acceptsHTML(req.headers.accept)) {
     const page = await servedFile(dist, target.pathname, 'text/html', { pinned });
     if (page.route === '/shell.html' && ['request', 'cached'].includes(page.render)) r = page;
   }
@@ -924,7 +935,7 @@ export async function serveBuildTree(dist, req, res, { pinned = null, pages = nu
   }
   if (!r.body) { res.writeHead(r.status, { 'cache-control': 'no-store', ...(r.status === 503 ? { 'retry-after': '1' } : {}) }); res.end(); return; }
   const type = webContentType(r.route);
-  if (!compression || r.status !== 200) { sendStaticBody(req, res, r.body, { 'content-type': type, 'cache-control': 'no-store' }, r.status); return; }
+  if (!compression || r.status !== 200) { sendStaticBody(req, res, r.body, { 'content-type': type, 'cache-control': 'no-store', ...(negotiated ? { vary: 'Accept' } : {}) }, r.status); return; }
   const body = Buffer.isBuffer(r.body) ? r.body : Buffer.from(r.body), digest = bodyDigest(body);
   let encoding = null;
   if (COMPRESSIBLE.has(type)) {
@@ -933,7 +944,7 @@ export async function serveBuildTree(dist, req, res, { pinned = null, pages = nu
     void compression.warm(digest, body);
   }
   const headers = { 'content-type': type, 'cache-control': 'no-cache', etag: `"${digest}${encoding ? `-${encoding}` : ''}"`,
-    ...(COMPRESSIBLE.has(type) ? { vary: 'Accept-Encoding' } : {}), ...(encoding ? { 'content-encoding': encoding } : {}) };
+    ...(COMPRESSIBLE.has(type) || negotiated ? { vary: [negotiated && 'Accept', COMPRESSIBLE.has(type) && 'Accept-Encoding'].filter(Boolean).join(', ') } : {}), ...(encoding ? { 'content-encoding': encoding } : {}) };
   if (matchesETag(req.headers['if-none-match'], headers.etag)) {
     const { 'content-type': _, 'content-encoding': __, ...validators } = headers;
     res.writeHead(304, validators); res.end(); return;
